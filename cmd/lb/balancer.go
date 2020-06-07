@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 	"sync"
+	"container/heap"
 
 	"github.com/VictoryKS/design-practice-3/httptools"
 	"github.com/VictoryKS/design-practice-3/signal"
@@ -19,7 +20,50 @@ type server struct {
 	isHealthy bool
 	connCnt int
 	mutex sync.Mutex
+	index int
 }
+
+//------------------
+type PriorityQueue []*server
+
+
+func (pq *PriorityQueue) Push(x interface{}) {
+	n := len(*pq)
+	item := x.(*server)
+	item.index = n
+	*pq = append(*pq, item)
+}
+
+func (pq *PriorityQueue) update(item *server, connCnt int, isHealthy bool) {
+	item.connCnt = connCnt
+	item.isHealthy = isHealthy
+	heap.Fix(pq, item.index)
+}
+
+func (pq PriorityQueue) Len() int { return len(pq) }
+
+func (pq PriorityQueue) Less(i, j int) bool {
+	// We want Pop to give us the highest, not lowest, priority so we use greater than here.
+	return pq[i].connCnt > pq[j].connCnt
+}
+
+func (pq PriorityQueue) Swap(i, j int) {
+	pq[i], pq[j] = pq[j], pq[i]
+	pq[i].index = i
+	pq[j].index = j
+}
+
+
+func (pq *PriorityQueue) Pop() interface{} {
+	old := *pq
+	n := len(old)
+	item := old[n-1]
+	old[n-1] = nil  // avoid memory leak
+	item.index = -1 // for safety
+	*pq = old[0 : n-1]
+	return item
+}
+//------------------
 
 var (
 	port = flag.Int("port", 8090, "load balancer port")
@@ -36,31 +80,29 @@ var (
 			name: "server1:8080",
 			isHealthy: false,
 			connCnt: 0,
+			index: 0,
 		},
 		&server {
 			name: "server2:8080",
 			isHealthy: false,
 			connCnt: 0,
+			index: 1,
 		},
 		&server {
 			name: "server3:8080",
 			isHealthy: false,
 			connCnt: 0,
+			index: 2,
 		},
 	}
+	pq = make(PriorityQueue, len(serversPool))
 )
 
-func findMin(serversPool []*server) int {
-	serverIndex := -1
-	connMin := int(^uint(0) >> 1) // max int
-	for i := 0; i < 3; i++ {
-		server := serversPool[i]
-		if (*server).isHealthy && (*server).connCnt < connMin {
-			serverIndex = i
-			connMin = (*server).connCnt
-		}
-	}
-	return serverIndex
+func findMin(pq *PriorityQueue) int {
+	old := *pq
+	n := len(old)
+	item := old[n-1]
+	return item.index
 }
 
 func scheme() string {
@@ -85,9 +127,9 @@ func health(dst string) bool {
 }
 
 func forward(server *server, rw http.ResponseWriter, r *http.Request) error {
-	(*server).mutex.Lock()
+	server.mutex.Lock()
 	(*server).connCnt++
-	(*server).mutex.Unlock()
+	server.mutex.Unlock()
 
 	dst := (*server).name
 	ctx, _ := context.WithTimeout(r.Context(), timeout)
@@ -115,18 +157,18 @@ func forward(server *server, rw http.ResponseWriter, r *http.Request) error {
 			log.Printf("Failed to write response: %s", err)
 		}
 
-		(*server).mutex.Lock()
+		server.mutex.Lock()
 		(*server).connCnt--
-		(*server).mutex.Unlock()
+		server.mutex.Unlock()
 
 		return nil
 	} else {
 		log.Printf("Failed to get response from %s: %s", dst, err)
 		rw.WriteHeader(http.StatusServiceUnavailable)
 
-		(*server).mutex.Lock()
+		server.mutex.Lock()
 		(*server).connCnt--
-		(*server).mutex.Unlock()
+		server.mutex.Unlock()
 
 		return err
 	}
@@ -134,6 +176,11 @@ func forward(server *server, rw http.ResponseWriter, r *http.Request) error {
 
 func main() {
 	flag.Parse()
+
+	for _, server := range serversPool {
+		pq[(*server).index] = server
+	}
+	heap.Init(&pq)
 
   for _, server := range serversPool {
 		server := server
@@ -146,7 +193,7 @@ func main() {
 	}
 
 	frontend := httptools.CreateServer(*port, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-		serverIndex := findMin(serversPool)
+		serverIndex := findMin(&pq)
 
 		if serverIndex >= 0 {
 			server := serversPool[serverIndex]

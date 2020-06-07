@@ -2,6 +2,7 @@ package main
 
 import (
   "testing"
+  "container/heap"
   . "gopkg.in/check.v1"
 )
 
@@ -26,12 +27,17 @@ var tests = [][3]struct {
 var expIndex = []int{0, 2, 1, 1, 2, -1}
 
 func (s *MySuite) TestBalancer(c *C) {
+  for _, server := range serversPool {
+    pq[(*server).index] = server
+  }
+  heap.Init(&pq)
+
   for j, test := range tests {
     for i, inServer := range test {
       server := serversPool[i]
       (*server).isHealthy = inServer.health
       (*server).connCnt = inServer.connections
     }
-    c.Assert(expIndex[j], Equals, findMin(serversPool))
+    c.Assert(expIndex[j], Equals, findMin(&pq))
 	}
 }
