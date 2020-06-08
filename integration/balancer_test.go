@@ -51,7 +51,7 @@ var _ = Suite(&MySuite{})
 func (s *MySuite) TestBalancer(c *C) {
 	var wg sync.WaitGroup
 
-	n := 40
+	n := 30
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func(wg *sync.WaitGroup){

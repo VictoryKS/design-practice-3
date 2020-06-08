@@ -16,15 +16,13 @@ var tests = [][3]struct {
   health bool
   connections int
 }{
-  {{true, 1}, {true, 2}, {true, 3}},
+  {{true, 3}, {true, 2}, {true, 1}},
   {{true, 2}, {true, 3}, {true, 1}},
-  {{true, 3}, {true, 1}, {true, 2}},
-  {{false, 1}, {true, 2}, {true, 3}},
+  {{false, 1}, {true, 3}, {true, 2}},
   {{false, 1}, {false, 2}, {true, 3}},
-  {{false, 1}, {false, 1}, {false, 1}},
 }
 
-var expIndex = []int{0, 2, 1, 1, 2, -1}
+var expIndex = []int{2, 2, 2, 2}
 
 func (s *MySuite) TestBalancer(c *C) {
   for _, server := range serversPool {
@@ -37,7 +35,10 @@ func (s *MySuite) TestBalancer(c *C) {
       server := serversPool[i]
       (*server).isHealthy = inServer.health
       (*server).connCnt = inServer.connections
+
+      pq.update(server, (*server).connCnt, (*server).isHealthy)
     }
-    c.Assert(expIndex[j], Equals, findMin(&pq))
+
+    c.Assert(findMin(&pq), Equals, expIndex[j])
 	}
 }
